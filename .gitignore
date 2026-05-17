@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment
+.env
+backend/.env
+
+# Build output
+dist/
+dist-ssr/
+
+# Uploads (user data)
+uploads/
+backend/uploads/
+
+# Tesseract training data (downloaded via npm)
+*.traineddata
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Lock files (optional - remove this line if you want to commit them)
+package-lock.json
