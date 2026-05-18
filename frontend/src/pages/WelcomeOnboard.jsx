@@ -48,13 +48,13 @@ const WelcomeOnboard = () => {
           <div className="flex items-center justify-center gap-3 mb-6">
             <Sparkles className="text-teal-600 animate-pulse" size={32} />
             <h1 className="text-5xl sm:text-6xl font-bold text-slate-900">
-              Welcome Aboard, <span className="bg-gradient-to-r from-teal-600 to-cyan-600 bg-clip-text text-transparent">{profile?.name || 'Team Member'}!</span>
+              Welcome Onboard, <span className="bg-gradient-to-r from-teal-600 to-cyan-600 bg-clip-text text-transparent">{profile?.name || 'Team Member'}!</span>
             </h1>
             <Sparkles className="text-cyan-600 animate-pulse" size={32} />
           </div>
 
           <p className="text-xl sm:text-2xl text-slate-600 font-medium max-w-3xl mx-auto leading-relaxed">
-            🎉 Congratulations! You've successfully completed your onboarding. We're thrilled to have you join our team! 
+            🎉 Congratulations! You've successfully completed your onboarding. We're thrilled to have you join our team!
             Here's what comes next and how to make the most of your first days.
           </p>
         </div>
