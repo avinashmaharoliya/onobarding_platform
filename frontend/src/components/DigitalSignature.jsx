@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/axios';
-import { Eraser, PenLine, Save } from 'lucide-react';
+import { Eraser, PenLine, Save, CheckCircle, AlertCircle } from 'lucide-react';
 
 const DigitalSignature = () => {
   const canvasRef = useRef(null);
@@ -14,7 +14,7 @@ const DigitalSignature = () => {
     const ctx = canvas.getContext('2d');
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
-    ctx.strokeStyle = '#111827';
+    ctx.strokeStyle = '#0f766e';
 
     const fetchSignatureStatus = async () => {
       try {
@@ -32,7 +32,6 @@ const DigitalSignature = () => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const source = event.touches?.[0] || event;
-
     return {
       x: source.clientX - rect.left,
       y: source.clientY - rect.top,
@@ -70,7 +69,6 @@ const DigitalSignature = () => {
   const handleSave = async () => {
     setSaving(true);
     setMessage('');
-
     try {
       const signature = canvasRef.current.toDataURL('image/png');
       const res = await api.post('/signature', { signature });
@@ -85,59 +83,83 @@ const DigitalSignature = () => {
   };
 
   return (
-    <div className="animate-fade-in max-w-3xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Digital Signature</h1>
-        <p className="text-gray-500 mt-1">Sign once here to acknowledge onboarding forms and declarations.</p>
-      </div>
-
-      {message && (
-        <div className={`p-4 rounded-lg mb-6 ${message.includes('success') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-          {message}
-        </div>
-      )}
-
-      {signedAt && (
-        <div className="p-4 rounded-lg mb-6 bg-blue-50 text-blue-700">
-          Current signature saved on {new Date(signedAt).toLocaleString()}.
-        </div>
-      )}
-
-      <div className="glass-panel p-6 rounded-2xl shadow-sm">
-        <div className="border border-gray-300 rounded-lg overflow-hidden bg-white touch-none">
-          <canvas
-            ref={canvasRef}
-            width="720"
-            height="240"
-            className="w-full h-60 cursor-crosshair"
-            onMouseDown={startDrawing}
-            onMouseMove={draw}
-            onMouseUp={stopDrawing}
-            onMouseLeave={stopDrawing}
-            onTouchStart={startDrawing}
-            onTouchMove={draw}
-            onTouchEnd={stopDrawing}
-          />
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50 to-slate-50 py-8 px-4">
+      <div className="max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-12 h-12 bg-gradient-to-br from-teal-600 to-cyan-600 rounded-xl flex items-center justify-center">
+            <PenLine className="text-white" size={24} />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Digital Signature</h1>
+            <p className="text-slate-600 mt-1 font-medium">Sign once here to acknowledge onboarding forms and declarations.</p>
+          </div>
         </div>
 
-        <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
-          <button
-            type="button"
-            onClick={handleClear}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-2.5 rounded-lg font-medium transition flex items-center justify-center space-x-2"
+        {/* Message */}
+        {message && (
+          <div className={`p-4 rounded-lg mb-6 border-2 flex items-center gap-2 ${
+            message.includes('success')
+              ? 'bg-green-50 text-green-700 border-green-200'
+              : 'bg-red-50 text-red-700 border-red-200'
+          }`}
           >
-            <Eraser size={18} />
-            <span>Clear</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-lg font-medium transition flex items-center justify-center space-x-2 disabled:opacity-50"
-          >
-            {saving ? <Save size={18} /> : <PenLine size={18} />}
-            <span>{saving ? 'Saving...' : 'Save Signature'}</span>
-          </button>
+            {message.includes('success') ? (
+              <CheckCircle size={20} />
+            ) : (
+              <AlertCircle size={20} />
+            )}
+            {message}
+          </div>
+        )}
+
+        {/* Signed Status */}
+        {signedAt && (
+          <div className="p-4 rounded-lg mb-6 bg-cyan-50 text-cyan-700 border-2 border-cyan-200 flex items-center gap-2 font-medium">
+            <CheckCircle size={20} />
+            Current signature saved on {new Date(signedAt).toLocaleString()}.
+          </div>
+        )}
+
+        {/* Canvas */}
+        <div className="bg-white border-2 border-teal-100 rounded-2xl p-6 shadow-lg">
+          <div className="border-2 border-dashed border-teal-300 rounded-lg overflow-hidden bg-white touch-none">
+            <canvas
+              ref={canvasRef}
+              width="720"
+              height="240"
+              className="w-full h-60 cursor-crosshair bg-white"
+              onMouseDown={startDrawing}
+              onMouseMove={draw}
+              onMouseUp={stopDrawing}
+              onMouseLeave={stopDrawing}
+              onTouchStart={startDrawing}
+              onTouchMove={draw}
+              onTouchEnd={stopDrawing}
+            />
+          </div>
+
+          {/* Buttons */}
+          <div className="mt-6 flex flex-col sm:flex-row gap-3 sm:justify-end">
+            <button
+              type="button"
+              onClick={handleClear}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-5 py-2.5 rounded-lg font-bold transition flex items-center justify-center gap-2"
+            >
+              <Eraser size={18} />
+              <span>Clear</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-700 hover:to-cyan-700 disabled:from-slate-400 disabled:to-slate-400 text-white px-5 py-2.5 rounded-lg font-bold transition flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-teal-500/40"
+            >
+              {saving ? <Save size={18} /> : <PenLine size={18} />}
+              <span>{saving ? 'Saving...' : 'Save Signature'}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
