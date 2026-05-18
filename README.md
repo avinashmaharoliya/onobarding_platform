@@ -162,11 +162,9 @@ onboarding-portal/
 │   ├── 📁 uploads/                # Stored files & signature PNGs (gitignored)
 │   ├── schema.sql                 # Idempotent DDL — safe to run multiple times
 │   ├── server.js                  # App entry point + Morgan logger + cron start
-│   ├── setup.js                   # 🆕 First-time setup wizard (create DB + schema)
-│   ├── reset.js                   # 🆕 Full DB drop + recreate (dev use only)
+│   ├── setup.js                   # First-time setup wizard (create DB + schema)
 │   ├── run_schema.js              # Apply schema to existing DB
-│   ├── update_hash.js             # Reset HR password hash
-│   ├── seed_employee.js           # Insert a demo employee
+│   ├── update_hash.js             # Emergency HR password reset
 │   ├── deleteUser.js              # Delete user + all cascade data
 │   ├── eng.traineddata            # Tesseract English model (gitignored)
 │   ├── package.json
@@ -564,26 +562,17 @@ All routes require both JWT auth AND HR role.
 All run from the `backend/` directory.
 
 ```bash
-# 🚀 First-time setup (creates DB + schema if they don't exist)
+# 🚀 First-time setup — creates DB + runs schema (recommended for new installs)
 npm run setup
 
 # 📋 Apply schema to an existing database
 npm run setup:schema
 
-# 🔑 Reset HR admin password to Admin@123
+# 🔑 Emergency: reset HR admin password to Admin@123
 node update_hash.js
-
-# 👤 Seed a demo employee (Riya Sharma / riya@company.com)
-node seed_employee.js
 
 # 🗑️ Delete a user and ALL their data (documents, checklist, profile, signature)
 node deleteUser.js email@example.com
-
-# ⚠️ FULL RESET — drops and recreates the entire database
-npm run reset
-
-# ⚠️ FULL RESET (no prompt, careful!)
-npm run reset:force
 ```
 
 ---
