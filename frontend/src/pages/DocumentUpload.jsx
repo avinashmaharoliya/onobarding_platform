@@ -3,29 +3,74 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { File, ScanText, Upload, CheckCircle, AlertCircle, Loader } from 'lucide-react';
 
+// Pre-process image on canvas: grayscale + contrast boost for better OCR
+function preprocessImage(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      // Scale up small images for better OCR
+      const scale = Math.max(1, Math.min(3, 1500 / Math.max(img.width, img.height)));
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext('2d');
+
+      // Draw original
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // Convert to grayscale + boost contrast
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        // Grayscale
+        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        // Contrast: push dark pixels darker, light pixels lighter
+        const contrast = 1.5;
+        const factor = (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
+        const enhanced = Math.min(255, Math.max(0, factor * (gray - 128) + 128));
+        data[i] = data[i + 1] = data[i + 2] = enhanced;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      URL.revokeObjectURL(url);
+      // Return as blob
+      canvas.toBlob(resolve, 'image/png');
+    };
+    img.src = url;
+  });
+}
+
 // Smart parser: extract key fields from raw OCR text
 function parseOcrFields(text) {
   const fields = {};
+  // Clean up common OCR noise
+  const clean = text.replace(/[|\\{}\[\]]/g, '').replace(/\s+/g, ' ');
 
-  // Aadhaar: 12 digit number in groups of 4
-  const aadhaar = text.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
-  if (aadhaar) fields['Aadhaar No'] = aadhaar[1].replace(/\s|-/g, ' ');
+  // Aadhaar: 12 digit number (may have spaces/dashes between groups)
+  const aadhaar = clean.match(/\b(\d{4}[\s]\d{4}[\s]\d{4}|\d{12})\b/);
+  if (aadhaar) fields['Aadhaar No'] = aadhaar[1].replace(/\s/g, ' ');
 
-  // PAN: 5 letters, 4 digits, 1 letter
-  const pan = text.match(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/);
+  // PAN: exactly 5 letters, 4 digits, 1 letter (strict)
+  const pan = clean.match(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/);
   if (pan) fields['PAN'] = pan[1];
 
-  // Date of Birth
-  const dob = text.match(/\b(DOB|Date of Birth|D\.O\.B)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/i);
-  if (dob) fields['Date of Birth'] = dob[2];
+  // DOB: with label, or standalone DD/MM/YYYY format
+  const dobLabeled = clean.match(/(?:DOB|Date of Birth|D\.O\.B|Birth)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
+  const dobStandalone = clean.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
+  if (dobLabeled) fields['Date of Birth'] = dobLabeled[1];
+  else if (dobStandalone) fields['Date of Birth'] = dobStandalone[1];
 
-  // Name (line containing "Name:" or after GOVERNMENT OF INDIA)
-  const nameLine = text.match(/(?:Name|नाम)[:\s]+([A-Z][a-zA-Z\s]{3,40})/);
+  // Name: after "Name" label
+  const nameLine = clean.match(/(?:Name|नाम)[:\s]+([A-Z][A-Za-z\s]{2,40}?)(?:\s{2,}|\n|$)/);
   if (nameLine) fields['Name'] = nameLine[1].trim();
 
   // Gender
-  const gender = text.match(/\b(MALE|FEMALE|Male|Female)\b/);
+  const gender = clean.match(/\b(MALE|FEMALE|Male|Female|पुरुष|महिला)\b/);
   if (gender) fields['Gender'] = gender[1];
+
+  // Father's Name
+  const father = clean.match(/(?:Father|S\/O|Son of|D\/O|Daughter of)[:\s]+([A-Z][A-Za-z\s]{2,40}?)(?:\s{2,}|$)/i);
+  if (father) fields["Father's Name"] = father[1].trim();
 
   return fields;
 }
@@ -58,6 +103,10 @@ const DocumentUpload = () => {
     setOcrProgress(0);
 
     try {
+      // Step 1: Pre-process image (grayscale + contrast) for better accuracy
+      const processedBlob = await preprocessImage(selectedFile);
+
+      // Step 2: Run Tesseract on the enhanced image
       const { createWorker } = await import('tesseract.js');
       const worker = await createWorker('eng', 1, {
         logger: m => {
@@ -67,7 +116,9 @@ const DocumentUpload = () => {
         }
       });
 
-      const result = await worker.recognize(selectedFile);
+      // PSM 6 = Assume a single uniform block of text (best for ID cards)
+      await worker.setParameters({ tessedit_pageseg_mode: '6' });
+      const result = await worker.recognize(processedBlob);
       await worker.terminate();
 
       const text = result.data.text.trim();
