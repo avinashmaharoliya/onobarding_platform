@@ -1,90 +1,135 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
-import { File, ScanText, Upload } from 'lucide-react';
+import { File, ScanText, Upload, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+
+// Smart parser: extract key fields from raw OCR text
+function parseOcrFields(text) {
+  const fields = {};
+
+  // Aadhaar: 12 digit number in groups of 4
+  const aadhaar = text.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
+  if (aadhaar) fields['Aadhaar No'] = aadhaar[1].replace(/\s|-/g, ' ');
+
+  // PAN: 5 letters, 4 digits, 1 letter
+  const pan = text.match(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/);
+  if (pan) fields['PAN'] = pan[1];
+
+  // Date of Birth
+  const dob = text.match(/\b(DOB|Date of Birth|D\.O\.B)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/i);
+  if (dob) fields['Date of Birth'] = dob[2];
+
+  // Name (line containing "Name:" or after GOVERNMENT OF INDIA)
+  const nameLine = text.match(/(?:Name|नाम)[:\s]+([A-Z][a-zA-Z\s]{3,40})/);
+  if (nameLine) fields['Name'] = nameLine[1].trim();
+
+  // Gender
+  const gender = text.match(/\b(MALE|FEMALE|Male|Female)\b/);
+  if (gender) fields['Gender'] = gender[1];
+
+  return fields;
+}
 
 const DocumentUpload = () => {
   const [docTypes, setDocTypes] = useState([]);
   const [selectedType, setSelectedType] = useState('');
   const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [ocrText, setOcrText] = useState('');
-  const [message, setMessage] = useState('');
+  const [ocrFields, setOcrFields] = useState({});
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [message, setMessage] = useState({ text: '', type: '' });
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchDocTypes = async () => {
-      try {
-        const res = await api.get('/documents/my');
-        // Filter to only types we haven't approved yet, or just show all
-        setDocTypes(res.data);
-      } catch (error) {
-        console.error(error);
-      }
-    };
-    fetchDocTypes();
+    api.get('/documents/my')
+      .then(res => setDocTypes(res.data))
+      .catch(console.error);
   }, []);
 
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-      setOcrText('');
-      setMessage('');
-    }
-  };
-
-  const handleScan = async () => {
-    if (!file) {
-      setMessage('Please select an image file first.');
-      return;
-    }
-
-    if (!file.type.startsWith('image/')) {
-      setMessage('OCR preview is available for JPG and PNG files only.');
-      return;
-    }
+  const runOcr = async (selectedFile) => {
+    if (!selectedFile || !selectedFile.type.startsWith('image/')) return;
 
     setScanning(true);
-    setMessage('');
     setOcrText('');
+    setOcrFields({});
+    setOcrProgress(0);
 
     try {
       const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
-      const result = await worker.recognize(file);
+      const worker = await createWorker('eng', 1, {
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            setOcrProgress(Math.round(m.progress * 100));
+          }
+        }
+      });
+
+      const result = await worker.recognize(selectedFile);
       await worker.terminate();
-      setOcrText(result.data.text.trim() || 'No readable text detected.');
+
+      const text = result.data.text.trim();
+      setOcrText(text || 'No readable text detected.');
+      setOcrFields(parseOcrFields(text));
     } catch (error) {
-      console.error(error);
-      setMessage('OCR scan failed. You can still upload the document.');
+      console.error('OCR error:', error);
+      setOcrText('OCR scan failed — you can still upload the document.');
     } finally {
       setScanning(false);
+      setOcrProgress(0);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+
+    setFile(selected);
+    setOcrText('');
+    setOcrFields({});
+    setMessage({ text: '', type: '' });
+
+    // Show image preview
+    if (selected.type.startsWith('image/')) {
+      const url = URL.createObjectURL(selected);
+      setPreview(url);
+      // Auto-run OCR
+      runOcr(selected);
+    } else {
+      setPreview(null);
     }
   };
 
   const handleUpload = async (e) => {
     e.preventDefault();
     if (!file || !selectedType) {
-      setMessage('Please select a file and document type.');
+      setMessage({ text: 'Please select a file and document type.', type: 'error' });
       return;
     }
 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('document_type_id', selectedType);
+    if (ocrText && ocrText !== 'No readable text detected.' && ocrText !== 'OCR scan failed — you can still upload the document.') {
+      formData.append('ocr_text', ocrText);
+    }
 
     setUploading(true);
-    setMessage('');
+    setMessage({ text: '', type: '' });
     try {
       await api.post('/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setMessage('Document uploaded successfully!');
+      setMessage({ text: '✅ Document uploaded successfully!', type: 'success' });
       setFile(null);
+      setPreview(null);
+      setOcrText('');
+      setOcrFields({});
       setTimeout(() => navigate('/documents/status'), 1500);
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Upload failed');
+      setMessage({ text: error.response?.data?.message || 'Upload failed', type: 'error' });
     } finally {
       setUploading(false);
     }
@@ -94,20 +139,23 @@ const DocumentUpload = () => {
     <div className="animate-fade-in max-w-2xl mx-auto">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Upload Document</h1>
-        <p className="text-gray-500 mt-1">Please provide clear copies (PDF, JPG, PNG) under 5MB.</p>
+        <p className="text-gray-500 mt-1">Provide clear copies (PDF, JPG, PNG) under 5MB. Images are auto-scanned with OCR.</p>
       </div>
 
-      {message && (
-        <div className={`p-4 rounded-lg mb-6 ${message.includes('success') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-          {message}
+      {message.text && (
+        <div className={`p-4 rounded-lg mb-6 flex items-center gap-2 ${message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+          {message.type === 'success' ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
+          {message.text}
         </div>
       )}
 
       <form onSubmit={handleUpload} className="glass-panel p-6 rounded-2xl shadow-sm space-y-6">
+
+        {/* Document Type */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Document Type</label>
-          <select 
-            value={selectedType} 
+          <select
+            value={selectedType}
             onChange={e => setSelectedType(e.target.value)}
             required
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none"
@@ -115,62 +163,96 @@ const DocumentUpload = () => {
             <option value="">Select Document Type</option>
             {docTypes.map(dt => (
               <option key={dt.type_id} value={dt.type_id}>
-                {dt.type_name} {dt.mandatory ? '*' : ''}
+                {dt.type_name} {dt.mandatory ? '(Required)' : '(Optional)'}
               </option>
             ))}
           </select>
         </div>
 
+        {/* File Drop Zone */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">File</label>
-          <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-primary transition">
-            <div className="space-y-1 text-center">
-              <File className="mx-auto h-12 w-12 text-gray-400" />
-              <div className="flex text-sm text-gray-600">
-                <label className="relative cursor-pointer bg-white rounded-md font-medium text-primary hover:text-primary-dark focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-primary">
-                  <span>Upload a file</span>
-                  <input type="file" className="sr-only" onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
-                </label>
-                <p className="pl-1">or drag and drop</p>
-              </div>
-              <p className="text-xs text-gray-500">PDF, PNG, JPG up to 5MB</p>
-            </div>
-          </div>
-          {file && <p className="mt-2 text-sm text-gray-600">Selected: {file.name}</p>}
+          <label className="mt-1 flex flex-col justify-center items-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-primary transition cursor-pointer">
+            <File className="h-12 w-12 text-gray-400 mb-2" />
+            <span className="text-sm text-gray-600">
+              <span className="font-medium text-primary hover:text-primary-dark">Click to upload</span> or drag and drop
+            </span>
+            <span className="text-xs text-gray-500 mt-1">PDF, PNG, JPG up to 5MB</span>
+            <input type="file" className="sr-only" onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png" />
+          </label>
+          {file && <p className="mt-2 text-sm text-gray-600 flex items-center gap-1"><CheckCircle size={14} className="text-green-500" /> {file.name}</p>}
         </div>
 
+        {/* Image Preview */}
+        {preview && (
+          <div className="rounded-lg overflow-hidden border border-gray-200">
+            <img src={preview} alt="Preview" className="w-full max-h-52 object-contain bg-gray-50" />
+          </div>
+        )}
+
+        {/* OCR Section — auto shows for images */}
         {file?.type.startsWith('image/') && (
-          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-blue-900">OCR Preview</h3>
-                <p className="text-xs text-blue-700 mt-1">Extract visible text before upload as a bonus verification aid.</p>
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <ScanText size={18} className="text-blue-600" />
+                <h3 className="text-sm font-semibold text-blue-900">OCR Text Extraction</h3>
               </div>
-              <button
-                type="button"
-                onClick={handleScan}
-                disabled={scanning}
-                className="bg-white hover:bg-blue-100 text-blue-700 border border-blue-200 px-4 py-2 rounded-lg flex items-center justify-center space-x-2 transition disabled:opacity-50"
-              >
-                <ScanText size={18} />
-                <span>{scanning ? 'Scanning...' : 'Scan Text'}</span>
-              </button>
+              {!scanning && (
+                <button
+                  type="button"
+                  onClick={() => runOcr(file)}
+                  className="text-xs bg-white border border-blue-200 text-blue-700 px-3 py-1 rounded-lg hover:bg-blue-100 transition"
+                >
+                  Re-scan
+                </button>
+              )}
             </div>
-            {ocrText && (
-              <div className="mt-4 bg-white rounded-lg border border-blue-100 p-3 text-sm text-gray-700 whitespace-pre-wrap max-h-40 overflow-auto">
-                {ocrText}
+
+            {scanning && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm text-blue-700">
+                  <Loader size={14} className="animate-spin" />
+                  Scanning document... {ocrProgress > 0 && `${ocrProgress}%`}
+                </div>
+                <div className="w-full bg-blue-200 rounded-full h-1.5">
+                  <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-300" style={{ width: `${ocrProgress}%` }} />
+                </div>
+              </div>
+            )}
+
+            {/* Parsed Key Fields */}
+            {!scanning && Object.keys(ocrFields).length > 0 && (
+              <div className="mb-3 grid grid-cols-2 gap-2">
+                {Object.entries(ocrFields).map(([key, val]) => (
+                  <div key={key} className="bg-white rounded-lg border border-blue-100 px-3 py-2">
+                    <p className="text-xs text-blue-500 font-medium">{key}</p>
+                    <p className="text-sm font-semibold text-gray-800 truncate">{val}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Raw OCR Text */}
+            {!scanning && ocrText && (
+              <div>
+                <p className="text-xs text-blue-600 mb-1 font-medium">Raw extracted text:</p>
+                <div className="bg-white rounded-lg border border-blue-100 p-3 text-xs text-gray-600 whitespace-pre-wrap max-h-36 overflow-auto font-mono">
+                  {ocrText}
+                </div>
               </div>
             )}
           </div>
         )}
 
-        <button 
-          type="submit" 
-          disabled={uploading}
+        {/* Upload Button */}
+        <button
+          type="submit"
+          disabled={uploading || scanning}
           className="w-full bg-primary hover:bg-primary-dark text-white py-2.5 rounded-lg flex items-center justify-center space-x-2 transition disabled:opacity-50"
         >
-          <Upload size={18} />
-          <span>{uploading ? 'Uploading...' : 'Upload Document'}</span>
+          {uploading ? <Loader size={18} className="animate-spin" /> : <Upload size={18} />}
+          <span>{uploading ? 'Uploading...' : scanning ? 'Scanning, please wait...' : 'Upload Document'}</span>
         </button>
       </form>
     </div>

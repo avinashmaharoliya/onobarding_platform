@@ -4,7 +4,6 @@ const multer = require('multer');
 const fileType = require('file-type');
 const path = require('path');
 const fs = require('fs');
-const Tesseract = require('tesseract.js');
 const db = require('../config/db');
 const auth = require('../middleware/auth');
 
@@ -29,17 +28,19 @@ async function ensureSignatureTable() {
   `);
 }
 
+// ── Upload Document ─────────────────────────────────────────────────────────
 router.post('/upload', auth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
 
-    // Profile complete check
+    // Must complete profile first
     const userQ = await db.query('SELECT profile_complete FROM users WHERE id = $1', [req.user.id]);
     if (!userQ.rows[0].profile_complete) {
       fs.unlinkSync(req.file.path);
       return res.status(403).json({ message: 'Complete profile before uploading documents' });
     }
 
+    // Validate actual MIME type via magic bytes (not just extension)
     const buffer = fs.readFileSync(req.file.path);
     const detected = await fileType.fromBuffer(buffer);
     const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -49,72 +50,72 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
       return res.status(400).json({ message: 'Invalid file type. Only PDF, JPG, PNG allowed.' });
     }
 
-    const { document_type_id } = req.body;
-    
-    // Check if doc type exists
+    const { document_type_id, ocr_text } = req.body;
+
+    // Validate document type
     const dt = await db.query('SELECT * FROM document_types WHERE id = $1', [document_type_id]);
     if (!dt.rows.length) {
       fs.unlinkSync(req.file.path);
       return res.status(400).json({ message: 'Invalid document type' });
     }
 
-    // Check if user already has this document approved
-    const existing = await db.query('SELECT status FROM documents WHERE user_id = $1 AND document_type_id = $2', [req.user.id, document_type_id]);
+    // Block re-upload if already approved
+    const existing = await db.query(
+      'SELECT status FROM documents WHERE user_id = $1 AND document_type_id = $2',
+      [req.user.id, document_type_id]
+    );
     if (existing.rows.length > 0 && existing.rows[0].status === 'Approved') {
       fs.unlinkSync(req.file.path);
       return res.status(403).json({ message: 'Document already approved, cannot replace.' });
     }
 
-    // Perform OCR if it's an image
-    let extractedText = null;
-    if (detected.mime.startsWith('image/')) {
-      try {
-        const result = await Tesseract.recognize(req.file.path, 'eng');
-        extractedText = result.data.text.trim();
-      } catch (err) {
-        console.error("OCR Error:", err);
-      }
-    }
+    // OCR text sent from browser-side Tesseract scan (more reliable than server-side)
+    const extractedText = (ocr_text && ocr_text.trim()) ? ocr_text.trim() : null;
 
-    // Upsert logic (if rejected or pending, replace it)
+    // Upsert: update if exists, insert if new
     if (existing.rows.length > 0) {
       await db.query(
-        'UPDATE documents SET file_path = $1, file_name = $2, mime_type = $3, status = $4, remark = NULL, uploaded_at = NOW(), extracted_text = $7 WHERE user_id = $5 AND document_type_id = $6',
-        [req.file.path, req.file.originalname, detected.mime, 'Pending', req.user.id, document_type_id, extractedText]
+        `UPDATE documents
+         SET file_path = $1, file_name = $2, mime_type = $3,
+             status = 'Pending', remark = NULL, uploaded_at = NOW(), extracted_text = $4
+         WHERE user_id = $5 AND document_type_id = $6`,
+        [req.file.path, req.file.originalname, detected.mime, extractedText, req.user.id, document_type_id]
       );
     } else {
       await db.query(
-        'INSERT INTO documents (user_id, document_type_id, file_path, file_name, mime_type, extracted_text) VALUES ($1, $2, $3, $4, $5, $6)',
+        `INSERT INTO documents (user_id, document_type_id, file_path, file_name, mime_type, extracted_text)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [req.user.id, document_type_id, req.file.path, req.file.originalname, detected.mime, extractedText]
       );
     }
 
-    // Check if all mandatory docs are uploaded to update user status
+    // Auto-update user status when all mandatory docs uploaded
     const mandatoryDocs = await db.query('SELECT id FROM document_types WHERE mandatory = true');
     const myDocs = await db.query('SELECT document_type_id FROM documents WHERE user_id = $1', [req.user.id]);
     const myDocIds = myDocs.rows.map(r => r.document_type_id);
     const allMandatoryUploaded = mandatoryDocs.rows.every(d => myDocIds.includes(d.id));
 
     if (allMandatoryUploaded) {
-      await db.query(`UPDATE users SET status = 'Documents Submitted' WHERE id = $1 AND status = 'Pending'`, [req.user.id]);
+      await db.query(
+        `UPDATE users SET status = 'Documents Submitted' WHERE id = $1 AND status = 'Pending'`,
+        [req.user.id]
+      );
     }
 
-    res.status(201).json({ 
-      message: 'Uploaded successfully', 
-      ocr_text: extractedText 
-    });
+    res.status(201).json({ message: 'Uploaded successfully', ocr_text: extractedText });
   } catch (error) {
-    console.error("Upload error", error);
-    if (req.file) fs.unlinkSync(req.file.path);
+    console.error('Upload error:', error);
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
+// ── Get My Documents ────────────────────────────────────────────────────────
 router.get('/my', auth, async (req, res) => {
   try {
-    // Get all document types and join with my documents
     const { rows } = await db.query(
-      `SELECT dt.id as type_id, dt.name as type_name, dt.mandatory, d.id as doc_id, d.status, d.remark, d.uploaded_at
+      `SELECT dt.id as type_id, dt.name as type_name, dt.mandatory,
+              d.id as doc_id, d.status, d.remark, d.uploaded_at
        FROM document_types dt
        LEFT JOIN documents d ON dt.id = d.document_type_id AND d.user_id = $1
        ORDER BY dt.id`,
@@ -122,11 +123,12 @@ router.get('/my', auth, async (req, res) => {
     );
     res.json(rows);
   } catch (error) {
-    console.error("Get my docs error", error);
+    console.error('Get my docs error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
+// ── Save Digital Signature ──────────────────────────────────────────────────
 router.post('/signature', auth, async (req, res) => {
   try {
     const { signature } = req.body;
@@ -152,37 +154,33 @@ router.post('/signature', auth, async (req, res) => {
 
     res.status(201).json({ message: 'Signature saved successfully' });
   } catch (error) {
-    console.error("Signature save error", error);
-    res.status(500).json({
-      message: 'Failed to save signature',
-      detail: process.env.NODE_ENV === 'production' ? undefined : error.message,
-    });
+    console.error('Signature save error:', error);
+    res.status(500).json({ message: 'Failed to save signature' });
   }
 });
 
+// ── Get Signature Status ────────────────────────────────────────────────────
 router.get('/signature/me', auth, async (req, res) => {
   try {
     await ensureSignatureTable();
-
     const { rows } = await db.query(
       'SELECT signed_at FROM digital_signatures WHERE user_id = $1',
       [req.user.id]
     );
-
     res.json({ signed: rows.length > 0, signed_at: rows[0]?.signed_at || null });
   } catch (error) {
-    console.error("Signature status error", error);
+    console.error('Signature status error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
+// ── Stream File ─────────────────────────────────────────────────────────────
 router.get('/file/:id', auth, async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM documents WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ message: 'File not found' });
-    
+
     const doc = rows[0];
-    // Check ownership or HR
     if (doc.user_id !== req.user.id && req.user.role !== 'hr') {
       return res.status(403).json({ message: 'Forbidden' });
     }
@@ -194,7 +192,7 @@ router.get('/file/:id', auth, async (req, res) => {
       res.status(404).json({ message: 'File not found on disk' });
     }
   } catch (error) {
-    console.error("File download error", error);
+    console.error('File download error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
