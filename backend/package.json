@@ -8,8 +8,6 @@
     "dev": "nodemon server.js",
     "setup": "node setup.js",
     "setup:schema": "node run_schema.js",
-    "reset": "node reset.js",
-    "reset:force": "node reset.js --force",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
