@@ -221,9 +221,9 @@ const ProfileSetup = () => {
                 </select>
               </motion.div>
 
-              {/* Emergency Contact */}
+              {/* Contact */}
               <motion.div variants={itemVariants}>
-                <label className="block text-sm font-bold text-slate-900 mb-2">Emergency Contact</label>
+                <label className="block text-sm font-bold text-slate-900 mb-2">Contact</label>
                 <input
                   type="text"
                   name="emergency_contact"
