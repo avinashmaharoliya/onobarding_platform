@@ -23,6 +23,119 @@ function parseFormattedOcrText(text) {
   return fields.length >= 2 ? fields : [];
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizePan(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function normalizeDate(value) {
+  if (!value) return '';
+
+  const raw = String(value).trim();
+  if (raw.includes('T')) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      const year = parsed.getFullYear();
+      const month = String(parsed.getMonth() + 1).padStart(2, '0');
+      const day = String(parsed.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  const dateOnly = raw.includes('T') ? raw.split('T')[0] : raw;
+  const isoMatch = dateOnly.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  const indianMatch = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (indianMatch) {
+    const [, day, month, yearValue] = indianMatch;
+    const year = yearValue.length === 2 ? `20${yearValue}` : yearValue;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return raw;
+}
+
+function formatDateForDisplay(value) {
+  const normalized = normalizeDate(value);
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return String(value || '');
+
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year}`;
+}
+
+function namesMatch(profileValue, documentValue) {
+  const profileName = normalizeText(profileValue);
+  const documentName = normalizeText(documentValue);
+  if (!profileName || !documentName) return false;
+  if (profileName === documentName) return true;
+
+  const profileTokens = profileName.split(' ').filter(token => token.length >= 3);
+  const documentTokens = documentName.split(' ').filter(token => token.length >= 3);
+  if (profileTokens.length === 0 || documentTokens.length === 0) return false;
+
+  return profileTokens.every(token => documentTokens.includes(token));
+}
+
+function findExtractedValue(fields, names) {
+  const normalizedNames = names.map(normalizeText);
+  const match = fields.find(([label]) => normalizedNames.includes(normalizeText(label)));
+  return match?.[1] || '';
+}
+
+function getDocumentMismatches(profile, extractedFields) {
+  if (!profile || extractedFields.length === 0) return [];
+
+  const checks = [
+    {
+      label: 'Name',
+      profileValue: profile.name,
+      documentValue: findExtractedValue(extractedFields, ['Full Name', 'Name']),
+      compare: namesMatch,
+      display: value => String(value || ''),
+    },
+    {
+      label: 'Date of Birth',
+      profileValue: profile.dob,
+      documentValue: findExtractedValue(extractedFields, ['Date of Birth', 'DOB', 'D.O.B']),
+      compare: (profileValue, documentValue) => normalizeDate(profileValue) === normalizeDate(documentValue),
+      display: formatDateForDisplay,
+    },
+    {
+      label: 'PAN',
+      profileValue: profile.pan,
+      documentValue: findExtractedValue(extractedFields, ['PAN', 'PAN Number', 'Permanent Account Number']),
+      compare: (profileValue, documentValue) => normalizePan(profileValue) === normalizePan(documentValue),
+      display: value => String(value || ''),
+    },
+  ];
+
+  return checks
+    .filter(({ profileValue, documentValue }) => profileValue && documentValue)
+    .map(({ label, profileValue, documentValue, compare, display }) => ({
+      label,
+      profileValue: display(profileValue),
+      documentValue: display(documentValue),
+      matches: compare(profileValue, documentValue),
+    }));
+}
+
 const HRVerify = () => {
   const { userId } = useParams();
   const [docs, setDocs] = useState([]);
@@ -363,6 +476,8 @@ const HRVerify = () => {
           ) : (
             docs.map((doc) => {
               const extractedFields = parseFormattedOcrText(doc.extracted_text);
+              const mismatchChecks = getDocumentMismatches(profile, extractedFields);
+              const hasMismatch = mismatchChecks.some(check => !check.matches);
 
               return (
                 <div
@@ -408,6 +523,35 @@ const HRVerify = () => {
                   {doc.extracted_text && (
                     <div className="mt-2">
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">AI Extracted Fields</p>
+                      {mismatchChecks.length > 0 && (
+                        <div className={`mb-3 p-3 rounded-lg border-2 ${
+                          hasMismatch
+                            ? 'bg-red-50 border-red-200 text-red-800'
+                            : 'bg-green-50 border-green-200 text-green-800'
+                        }`}
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            {hasMismatch ? <AlertCircle size={16} /> : <CheckCircle size={16} />}
+                            <p className="text-sm font-bold">
+                              {hasMismatch ? 'Profile mismatch detected' : 'Profile details match document'}
+                            </p>
+                          </div>
+                          <div className="space-y-1">
+                            {mismatchChecks.map(check => (
+                              <div key={`${doc.id}-${check.label}-match`} className="text-xs font-medium">
+                                <span className="font-bold">{check.label}:</span>{' '}
+                                {check.matches ? (
+                                  <span>matches</span>
+                                ) : (
+                                  <span>
+                                    profile "{String(check.profileValue)}" vs document "{String(check.documentValue)}"
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {extractedFields.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {extractedFields.map(([label, value]) => (
