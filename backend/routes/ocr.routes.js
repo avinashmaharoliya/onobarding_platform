@@ -18,21 +18,34 @@ router.post('/parse-ocr', auth, async (req, res) => {
     return res.status(503).json({ message: 'Groq API key not configured' });
   }
 
-  const prompt = `You are a document parser for an HR onboarding system.
-You will be given raw OCR text extracted from an Indian identity or HR document.
+  const prompt = `You are an expert OCR post-processor for Indian government identity documents (Aadhaar, PAN Card, Passport, Driving Licence) and HR documents.
+
+The input is RAW, NOISY OCR text — characters may be garbled, words split, or partially misread. Use your knowledge of Indian document formats to intelligently extract fields despite the noise.
+
 Document type hint: "${doc_type || 'Unknown'}"
 
-Extract ALL readable fields and return ONLY a valid JSON object.
-Keys should be human-readable labels (e.g. "Full Name", "Date of Birth", "Aadhaar Number", "PAN", "Address", "Gender", "Father's Name", "Issue Date", "Expiry Date", "Employee ID", etc.)
-Only include fields that are actually present in the text. Do not guess.
-If a field is partially readable, include it with a "?" suffix on the key.
+EXTRACTION RULES:
+1. PAN Number: Always 10 chars — 5 uppercase letters + 4 digits + 1 uppercase letter (e.g. ABCDE1234F). Look for this pattern even if surrounded by noise.
+2. Aadhaar Number: 12 digits, often in groups of 4 (e.g. 1234 5678 9012). Last 4 digits may be visible even if others are masked.
+3. Full Name: On PAN cards, the name appears AFTER "Permanent Account Number" line. On Aadhaar, after the Govt of India header. It's usually in ALL CAPS or Title Case.
+4. Father's Name: On PAN cards, labeled "Father's Name" — appears just below the name. May be garbled but look for it.
+5. Date of Birth: Format DD/MM/YYYY. On PAN labeled "Date of Birth", on Aadhaar labeled "DOB".
+6. Gender: MALE or FEMALE on Aadhaar cards.
+7. Address: Multi-line on Aadhaar, includes pin code (6 digits).
+
+IMPORTANT: The OCR text is noisy. Common errors:
+- 'O' confused with '0', 'I' with '1', 'S' with '5'
+- Extra spaces or missing spaces in the middle of words
+- Words like "faar" likely means "Father", "Anes" likely means "Name"
+- Reconstruct the most likely value using context
 
 Raw OCR text:
 """
-${raw_text.substring(0, 1500)}
+${raw_text.substring(0, 2000)}
 """
 
-Return ONLY the JSON object, no explanation, no markdown, no code blocks.`;
+Return ONLY a JSON object with clean, corrected field values. No explanation, no markdown, no code blocks.
+Example format: {"Full Name": "AVINASH SHARMA", "PAN": "ABCDE1234F", "Father's Name": "RAMESH SHARMA", "Date of Birth": "15/08/1990"}`;
 
   try {
     const response = await fetch(GROQ_API_URL, {
