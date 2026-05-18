@@ -1,8 +1,26 @@
-CREATE TYPE user_role AS ENUM ('employee', 'hr');
-CREATE TYPE user_status AS ENUM ('Pending', 'Documents Submitted', 'Approved');
-CREATE TYPE doc_status AS ENUM ('Pending', 'Approved', 'Rejected');
+-- ─────────────────────────────────────────────
+-- Onboarding Portal – Idempotent Schema
+-- Safe to run multiple times (IF NOT EXISTS + ON CONFLICT)
+-- ─────────────────────────────────────────────
 
-CREATE TABLE users (
+-- ENUM types (skip if already exist)
+DO $$ BEGIN
+  CREATE TYPE user_role AS ENUM ('employee', 'hr');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE user_status AS ENUM ('Pending', 'Documents Submitted', 'Approved');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE doc_status AS ENUM ('Pending', 'Approved', 'Rejected');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Users
+CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     email VARCHAR(150) UNIQUE NOT NULL,
@@ -15,7 +33,8 @@ CREATE TABLE users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE employee_profiles (
+-- Employee Profiles
+CREATE TABLE IF NOT EXISTS employee_profiles (
     id SERIAL PRIMARY KEY,
     user_id INT UNIQUE NOT NULL,
     dob DATE,
@@ -30,7 +49,8 @@ CREATE TABLE employee_profiles (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE TABLE document_types (
+-- Document Types
+CREATE TABLE IF NOT EXISTS document_types (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     mandatory BOOLEAN DEFAULT TRUE,
@@ -39,13 +59,15 @@ CREATE TABLE document_types (
 );
 
 INSERT INTO document_types (name, mandatory) VALUES
-('Aadhar Card', TRUE),
-('PAN Card', TRUE),
-('Address Proof', TRUE),
-('Degree Certificate', TRUE),
-('Experience Letter', FALSE);
+  ('Aadhar Card', TRUE),
+  ('PAN Card', TRUE),
+  ('Address Proof', TRUE),
+  ('Degree Certificate', TRUE),
+  ('Experience Letter', FALSE)
+ON CONFLICT DO NOTHING;
 
-CREATE TABLE documents (
+-- Documents
+CREATE TABLE IF NOT EXISTS documents (
     id SERIAL PRIMARY KEY,
     user_id INT NOT NULL,
     document_type_id INT NOT NULL,
@@ -63,7 +85,8 @@ CREATE TABLE documents (
     FOREIGN KEY (verified_by) REFERENCES users(id)
 );
 
-CREATE TABLE checklist_items (
+-- Checklist Items
+CREATE TABLE IF NOT EXISTS checklist_items (
     id SERIAL PRIMARY KEY,
     title VARCHAR(200) NOT NULL,
     description TEXT,
@@ -72,13 +95,15 @@ CREATE TABLE checklist_items (
 );
 
 INSERT INTO checklist_items (title, description, sort_order) VALUES
-('Sign NDA', 'Download, sign and upload the NDA form', 1),
-('Complete IT Setup Form', 'Fill the IT asset request form', 2),
-('Read Employee Handbook', 'Read and acknowledge the handbook', 3),
-('Submit Bank Details', 'Ensure bank account is filled in profile', 4),
-('ID Card Photo Upload', 'Upload passport size photo for ID card', 5);
+  ('Sign NDA', 'Download, sign and upload the NDA form', 1),
+  ('Complete IT Setup Form', 'Fill the IT asset request form', 2),
+  ('Read Employee Handbook', 'Read and acknowledge the handbook', 3),
+  ('Submit Bank Details', 'Ensure bank account is filled in profile', 4),
+  ('ID Card Photo Upload', 'Upload passport size photo for ID card', 5)
+ON CONFLICT DO NOTHING;
 
-CREATE TABLE checklist_progress (
+-- Checklist Progress
+CREATE TABLE IF NOT EXISTS checklist_progress (
     id SERIAL PRIMARY KEY,
     user_id INT NOT NULL,
     checklist_item_id INT NOT NULL,
@@ -91,7 +116,8 @@ CREATE TABLE checklist_progress (
     FOREIGN KEY (checklist_item_id) REFERENCES checklist_items(id)
 );
 
-CREATE TABLE digital_signatures (
+-- Digital Signatures
+CREATE TABLE IF NOT EXISTS digital_signatures (
     id SERIAL PRIMARY KEY,
     user_id INT UNIQUE NOT NULL,
     file_path VARCHAR(500) NOT NULL,
@@ -99,5 +125,8 @@ CREATE TABLE digital_signatures (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Default HR admin account
+-- Password: HRAdmin@123  (bcrypt hash below)
 INSERT INTO users (name, email, role, password_hash) VALUES
-('Admin HR', 'hr@company.com', 'hr', '$2a$10$T81K1iZp5O2rO.oF3TWeo.Yh9hFm7eD6XnE3dI5bYQxP/Gj/m7X/G');
+  ('Admin HR', 'hr@company.com', 'hr', '$2b$10$gCs1eX7P79zm14SuMYucnuYnKfpUqfh9vLOeZiImi0/ohoWDXr/9a')
+ON CONFLICT (email) DO NOTHING;

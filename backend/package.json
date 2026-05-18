@@ -6,6 +6,10 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "setup": "node setup.js",
+    "setup:schema": "node run_schema.js",
+    "reset": "node reset.js",
+    "reset:force": "node reset.js --force",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,9 +24,10 @@
     "express": "^5.2.1",
     "file-type": "^14.1.4",
     "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.10.1",
     "multer": "^2.1.1",
     "node-cron": "^3.0.3",
-    "nodemailer": "^8.0.7",
+    "nodemailer": "^6.10.1",
     "pg": "^8.20.0",
     "tesseract.js": "^7.0.0"
   },

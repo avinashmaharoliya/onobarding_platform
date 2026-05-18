@@ -1,11 +1,18 @@
 const express = require('express');
 const cors = require('cors');
+const morgan = require('morgan');
 const { startChecklistReminderCron } = require('./utils/emailReminder');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+// ── HTTP request logger ───────────────────────────────────────────────────────
+morgan.token('time', () => new Date().toLocaleTimeString('en-IN', { hour12: false }));
+app.use(morgan('\x1b[90m[:time]\x1b[0m \x1b[36m:method\x1b[0m \x1b[33m:url\x1b[0m → \x1b[32m:status\x1b[0m \x1b[90m:response-time ms\x1b[0m'));
+// ─────────────────────────────────────────────────────────────────────────────
+
 
 // Import routes
 app.use('/api/auth', require('./routes/auth.routes'));
