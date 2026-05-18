@@ -10,7 +10,11 @@ app.use(express.json({ limit: '2mb' }));
 
 // ── HTTP request logger ───────────────────────────────────────────────────────
 morgan.token('time', () => new Date().toLocaleTimeString('en-IN', { hour12: false }));
-app.use(morgan('\x1b[90m[:time]\x1b[0m \x1b[36m:method\x1b[0m \x1b[33m:url\x1b[0m → \x1b[32m:status\x1b[0m \x1b[90m:response-time ms\x1b[0m'));
+const isProduction = process.env.NODE_ENV === 'production' || !process.stdout.isTTY;
+const morganFormat = isProduction
+  ? '[:time] :method :url → :status :response-time ms'
+  : '\x1b[90m[:time]\x1b[0m \x1b[36m:method\x1b[0m \x1b[33m:url\x1b[0m → \x1b[32m:status\x1b[0m \x1b[90m:response-time ms\x1b[0m';
+app.use(morgan(morganFormat));
 // ─────────────────────────────────────────────────────────────────────────────
 
 
