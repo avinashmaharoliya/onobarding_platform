@@ -31,6 +31,7 @@ Thumbs.db
 
 # Local study notes
 PROJECT_GUIDE_FOR_JUDGES.md
+project_explained.md
 
 # Lock files (optional - remove this line if you want to commit them)
 package-lock.json
