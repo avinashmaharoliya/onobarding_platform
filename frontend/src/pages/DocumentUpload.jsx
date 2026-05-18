@@ -123,7 +123,25 @@ const DocumentUpload = () => {
 
       const text = result.data.text.trim();
       setOcrText(text || 'No readable text detected.');
-      setOcrFields(parseOcrFields(text));
+
+      if (text && text.length > 10) {
+        // Step 3: Send raw OCR text to Groq LLM for structured extraction
+        setOcrProgress(-1); // -1 = AI parsing phase
+        try {
+          const selectedDoc = docTypes.find(d => String(d.type_id) === String(selectedType));
+          const res = await api.post('/ocr/parse-ocr', {
+            raw_text: text,
+            doc_type: selectedDoc?.type_name || ''
+          });
+          if (res.data?.fields && Object.keys(res.data.fields).length > 0) {
+            setOcrFields(res.data.fields); // structured from Groq
+          } else {
+            setOcrFields(parseOcrFields(text)); // regex fallback
+          }
+        } catch {
+          setOcrFields(parseOcrFields(text)); // regex fallback if Groq fails
+        }
+      }
     } catch (error) {
       console.error('OCR error:', error);
       setOcrText('OCR scan failed — you can still upload the document.');
@@ -247,7 +265,8 @@ const DocumentUpload = () => {
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <ScanText size={18} className="text-blue-600" />
-                <h3 className="text-sm font-semibold text-blue-900">OCR Text Extraction</h3>
+                <h3 className="text-sm font-semibold text-blue-900">OCR + AI Extraction</h3>
+                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Groq Llama3</span>
               </div>
               {!scanning && (
                 <button
@@ -260,7 +279,8 @@ const DocumentUpload = () => {
               )}
             </div>
 
-            {scanning && (
+            {/* Tesseract scanning phase */}
+            {scanning && ocrProgress >= 0 && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-sm text-blue-700">
                   <Loader size={14} className="animate-spin" />
@@ -272,15 +292,26 @@ const DocumentUpload = () => {
               </div>
             )}
 
-            {/* Parsed Key Fields */}
+            {/* Groq AI parsing phase */}
+            {scanning && ocrProgress === -1 && (
+              <div className="flex items-center gap-2 text-sm text-purple-700 bg-purple-50 rounded-lg px-3 py-2">
+                <Loader size={14} className="animate-spin" />
+                <span>🤖 AI is extracting structured fields from the document...</span>
+              </div>
+            )}
+
+            {/* Parsed Fields — from Groq or regex */}
             {!scanning && Object.keys(ocrFields).length > 0 && (
-              <div className="mb-3 grid grid-cols-2 gap-2">
-                {Object.entries(ocrFields).map(([key, val]) => (
-                  <div key={key} className="bg-white rounded-lg border border-blue-100 px-3 py-2">
-                    <p className="text-xs text-blue-500 font-medium">{key}</p>
-                    <p className="text-sm font-semibold text-gray-800 truncate">{val}</p>
-                  </div>
-                ))}
+              <div className="mb-3">
+                <p className="text-xs text-purple-600 font-semibold mb-2 flex items-center gap-1">🤖 AI-extracted fields:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(ocrFields).map(([key, val]) => (
+                    <div key={key} className="bg-white rounded-lg border border-blue-100 px-3 py-2">
+                      <p className="text-xs text-blue-500 font-medium">{key}</p>
+                      <p className="text-sm font-semibold text-gray-800">{String(val)}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

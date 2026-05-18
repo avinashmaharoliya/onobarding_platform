@@ -26,6 +26,7 @@ app.use('/api/signature', require('./routes/signature.routes'));
 app.use('/api/checklist', require('./routes/checklist.routes'));
 app.use('/api/joining', require('./routes/joining.routes'));
 app.use('/api/admin', require('./routes/admin.routes'));
+app.use('/api/ocr', require('./routes/ocr.routes'));
 
 // Create uploads folder if it doesn't exist
 const fs = require('fs');
