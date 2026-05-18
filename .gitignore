@@ -29,5 +29,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local study notes
+PROJECT_GUIDE_FOR_JUDGES.md
+
 # Lock files (optional - remove this line if you want to commit them)
 package-lock.json
