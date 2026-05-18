@@ -4,6 +4,25 @@ import api from '../../api/axios';
 import StatusBadge from '../../components/StatusBadge';
 import { CheckCircle, XCircle, ArrowLeft, Download, Eye, X, AlertCircle, FileText } from 'lucide-react';
 
+function parseFormattedOcrText(text) {
+  const fields = (text || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separatorIndex = line.indexOf(':');
+      if (separatorIndex === -1) return null;
+
+      const label = line.slice(0, separatorIndex).trim();
+      const value = line.slice(separatorIndex + 1).trim();
+      if (!label || !value) return null;
+      return [label, value];
+    })
+    .filter(Boolean);
+
+  return fields.length >= 2 ? fields : [];
+}
+
 const HRVerify = () => {
   const { userId } = useParams();
   const [docs, setDocs] = useState([]);
@@ -342,11 +361,14 @@ const HRVerify = () => {
               <p className="text-slate-500 font-medium">This employee hasn't uploaded any documents yet.</p>
             </div>
           ) : (
-            docs.map((doc) => (
-              <div
-                key={doc.id}
-                className="bg-white border-2 border-teal-100 rounded-2xl p-6 shadow-lg hover:shadow-xl transition flex flex-col md:flex-row md:items-start gap-6"
-              >
+            docs.map((doc) => {
+              const extractedFields = parseFormattedOcrText(doc.extracted_text);
+
+              return (
+                <div
+                  key={doc.id}
+                  className="bg-white border-2 border-teal-100 rounded-2xl p-6 shadow-lg hover:shadow-xl transition flex flex-col md:flex-row md:items-start gap-6"
+                >
                 <div className="flex-1 space-y-3">
                   <div className="flex justify-between items-start">
                     <div>
@@ -385,10 +407,21 @@ const HRVerify = () => {
 
                   {doc.extracted_text && (
                     <div className="mt-2">
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">OCR Extracted Text</p>
-                      <div className="text-xs text-slate-700 bg-cyan-50 p-3 rounded-lg border-2 border-cyan-200 max-h-32 overflow-y-auto whitespace-pre-wrap font-medium">
-                        {doc.extracted_text}
-                      </div>
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">AI Extracted Fields</p>
+                      {extractedFields.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {extractedFields.map(([label, value]) => (
+                            <div key={`${doc.id}-${label}`} className="bg-cyan-50 p-3 rounded-lg border-2 border-cyan-200">
+                              <p className="text-xs text-teal-700 font-bold">{label}</p>
+                              <p className="text-sm text-slate-900 font-bold mt-1 break-words">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-700 bg-cyan-50 p-3 rounded-lg border-2 border-cyan-200 max-h-32 overflow-y-auto whitespace-pre-wrap font-medium">
+                          {doc.extracted_text}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -425,8 +458,9 @@ const HRVerify = () => {
                     </div>
                   </div>
                 )}
-              </div>
-            ))
+                </div>
+              );
+            })
           )}
         </div>
       </div>

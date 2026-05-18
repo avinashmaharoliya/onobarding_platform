@@ -91,6 +91,13 @@ function parseOcrFields(text) {
   return fields;
 }
 
+function formatOcrFields(fields) {
+  return Object.entries(fields)
+    .filter(([, value]) => value !== null && value !== undefined && String(value).trim())
+    .map(([key, value]) => `${key}: ${String(value).trim()}`)
+    .join('\n');
+}
+
 const DocumentUpload = () => {
   const [docTypes, setDocTypes] = useState([]);
   const [selectedType, setSelectedType] = useState('');
@@ -195,8 +202,9 @@ const DocumentUpload = () => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('document_type_id', selectedType);
-    if (ocrText && !ocrText.startsWith('No readable') && !ocrText.startsWith('OCR scan failed')) {
-      formData.append('ocr_text', ocrText);
+    const formattedOcrText = Object.keys(ocrFields).length > 0 ? formatOcrFields(ocrFields) : ocrText;
+    if (formattedOcrText && !formattedOcrText.startsWith('No readable') && !formattedOcrText.startsWith('OCR scan failed')) {
+      formData.append('ocr_text', formattedOcrText);
     }
 
     setUploading(true);
