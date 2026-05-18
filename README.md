@@ -17,6 +17,20 @@
   <img src="https://img.shields.io/badge/AES--256-Encrypted-10B981?style=for-the-badge&logo=letsencrypt&logoColor=white" />
 </p>
 
+<p align="center">
+  <a href="https://onboarding-portal-qbnd.onrender.com" target="_blank">
+    <img src="https://img.shields.io/badge/%F0%9F%8C%90%20Live%20Demo-onboarding--portal-2563EB?style=for-the-badge" alt="Live Demo" />
+  </a>
+  <a href="https://onobarding-api-dtlb.onrender.com" target="_blank">
+    <img src="https://img.shields.io/badge/%E2%9A%99%EF%B8%8F%20API-onboarding--api-10B981?style=for-the-badge" alt="API" />
+  </a>
+  <a href="https://github.com/avinashmaharoliya/onobarding_platform" target="_blank">
+    <img src="https://img.shields.io/badge/GitHub-Source%20Code-181717?style=for-the-badge&logo=github" alt="GitHub" />
+  </a>
+</p>
+
+> 🔐 **Demo Login** — HR: `hr@company.com` / `Admin@123`
+
 ---
 
 ## 📋 Table of Contents
@@ -670,6 +684,14 @@ Go back to backend → Environment → set `FRONTEND_URL` to your frontend's Ren
 
 > [!NOTE]
 > Free Render services sleep after 15 min of inactivity. First request after sleep takes ~30 seconds. Normal for free tier — upgrade to Starter ($7/mo) for always-on.
+
+### 🌐 Live Deployment URLs
+
+| Service | URL |
+|---------|-----|
+| **Frontend** | https://onboarding-portal-qbnd.onrender.com |
+| **Backend API** | https://onobarding-api-dtlb.onrender.com |
+| **Database** | Render PostgreSQL — Singapore region |
 
 ---
 
