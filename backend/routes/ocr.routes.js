@@ -3,7 +3,7 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama3-8b-8192'; // Fast, free, great for structured extraction
+const MODEL = 'llama-3.3-70b-versatile'; // 70B — much better at noisy text extraction, still free on Groq
 
 // ── Parse raw OCR text using Groq LLM ────────────────────────────────────────
 router.post('/parse-ocr', auth, async (req, res) => {
