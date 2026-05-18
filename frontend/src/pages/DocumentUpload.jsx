@@ -36,11 +36,15 @@ function preprocessImage(file) {
 // Regex fallback: extract fields from noisy Indian document OCR
 function parseOcrFields(text) {
   const fields = {};
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const clean = text.replace(/[|\\{}\[\]]/g, '').replace(/\s+/g, ' ');
+  const lines = text
+    .split('\n')
+    .map(l => l.replace(/[|\\{}\[\]~_]/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const clean = lines.join(' ');
+  const upperClean = clean.toUpperCase();
 
   // PAN: 5 letters + 4 (digits or O/0 confused) + 1 letter
-  const panRaw = clean.match(/\b([A-Z]{5}[A-Z0-9]{4}[A-Z])\b/);
+  const panRaw = upperClean.match(/\b([A-Z]{5}[A-Z0-9]{4}[A-Z])\b/);
   if (panRaw) {
     const p = panRaw[1].split('');
     for (let i = 5; i <= 8; i++) { if (p[i] === 'O') p[i] = '0'; }
@@ -50,11 +54,13 @@ function parseOcrFields(text) {
 
   // Aadhaar: 12 digits
   const aadhaar = clean.match(/\b(\d{4}\s\d{4}\s\d{4}|\d{12})\b/);
-  if (aadhaar) fields['Aadhaar No'] = aadhaar[1];
+  if (aadhaar) {
+    fields['Aadhaar Number'] = aadhaar[1].replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ').trim();
+  }
 
   // DOB
-  const dobLabeled = clean.match(/(?:DOB|Date of Birth|D\.O\.B|Birth)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
-  const dobStandalone = clean.match(/\b(\d{2}\/\d{2}\/\d{4})\b/);
+  const dobLabeled = clean.match(/(?:DOB|D\.O\.B|Date of Birth|Birth|YOB)[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4})/i);
+  const dobStandalone = clean.match(/\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\b/);
   if (dobLabeled) fields['Date of Birth'] = dobLabeled[1];
   else if (dobStandalone) fields['Date of Birth'] = dobStandalone[1];
 
@@ -70,17 +76,27 @@ function parseOcrFields(text) {
     }
   }
 
-  // Full Name: find line with "AVINASH" style all-caps name after "Anes"/"Name" label
-  for (let i = 0; i < lines.length; i++) {
-    if (/anes|name/i.test(lines[i]) && !(/father|faar/i.test(lines[i]))) {
-      for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
-        const c = lines[j].replace(/[^A-Za-z\s]/g, '').trim();
-        if (/^[A-Z][A-Z\s]{4,40}$/.test(c)) {
-          fields['Full Name'] = c;
-          break;
-        }
+  // Full Name: prefer explicit labels, then fall back to a likely person-name line.
+  const nameLabelIdx = lines.findIndex(l => /(?:^|\s)(name|anes)(?:\s|:|$)/i.test(l) && !/father|faar/i.test(l));
+  if (nameLabelIdx !== -1) {
+    for (let j = nameLabelIdx + 1; j < Math.min(nameLabelIdx + 4, lines.length); j++) {
+      const candidate = normalizeNameCandidate(lines[j]);
+      if (candidate) {
+        fields['Full Name'] = candidate;
+        break;
       }
-      if (fields['Full Name']) break;
+    }
+  }
+
+  if (!fields['Full Name']) {
+    const ignoredNameWords = /GOVERNMENT|INDIA|UNIQUE|IDENTIFICATION|AUTHORITY|AADHAAR|DOB|BIRTH|MALE|FEMALE|ADDRESS|PERMANENT|ACCOUNT|INCOME|TAX|DEPARTMENT/i;
+    for (const line of lines) {
+      if (ignoredNameWords.test(line)) continue;
+      const candidate = normalizeNameCandidate(line);
+      if (candidate && candidate.split(' ').length >= 2) {
+        fields['Full Name'] = candidate;
+        break;
+      }
     }
   }
 
@@ -88,11 +104,69 @@ function parseOcrFields(text) {
   const gender = clean.match(/\b(MALE|FEMALE)\b/i);
   if (gender) fields['Gender'] = gender[1].toUpperCase();
 
+  const address = extractAddress(lines);
+  if (address) fields['Address'] = address;
+
   return fields;
 }
 
+function normalizeNameCandidate(value) {
+  const candidate = String(value || '')
+    .replace(/[^A-Za-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+
+  if (!/^[A-Z][A-Z\s]{4,50}$/.test(candidate)) return null;
+  if (/\b(GOVERNMENT|INDIA|AADHAAR|CARD|DOB|MALE|FEMALE|ADDRESS|FATHER|YEAR)\b/.test(candidate)) return null;
+  return candidate;
+}
+
+function extractAddress(lines) {
+  const startIndex = lines.findIndex(line => /address|c\/o|s\/o|d\/o|w\/o/i.test(line));
+  if (startIndex === -1) return null;
+
+  const addressLines = [];
+  for (let i = startIndex; i < Math.min(lines.length, startIndex + 7); i++) {
+    const cleaned = lines[i]
+      .replace(/^address\s*:?\s*/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) continue;
+    if (/government|unique identification|aadhaar/i.test(cleaned)) continue;
+    addressLines.push(cleaned);
+    if (/\b\d{6}\b/.test(cleaned)) break;
+  }
+
+  const address = addressLines.join(', ').replace(/\s+,/g, ',').trim();
+  return address.length >= 12 ? address.toUpperCase() : null;
+}
+
+function canonicalizeOcrFields(fields) {
+  const canonical = {};
+  const aliases = [
+    ['Full Name', ['full name', 'name', 'candidate name', 'applicant name']],
+    ['PAN', ['pan', 'pan number', 'permanent account number']],
+    ['Aadhaar Number', ['aadhaar number', 'aadhar number', 'aadhaar no', 'aadhar no', 'uid']],
+    ["Father's Name", ["father's name", 'father name', 'fathers name']],
+    ['Date of Birth', ['date of birth', 'dob', 'd.o.b', 'birth date']],
+    ['Gender', ['gender', 'sex']],
+    ['Address', ['address', 'residence address']],
+  ];
+
+  Object.entries(fields || {}).forEach(([key, value]) => {
+    if (value === null || value === undefined || String(value).trim() === '') return;
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const alias = aliases.find(([, names]) => names.includes(normalizedKey));
+    const canonicalKey = alias?.[0] || key;
+    canonical[canonicalKey] = String(value).trim();
+  });
+
+  return canonical;
+}
+
 function formatOcrFields(fields) {
-  return Object.entries(fields)
+  return Object.entries(canonicalizeOcrFields(fields))
     .filter(([, value]) => value !== null && value !== undefined && String(value).trim())
     .map(([key, value]) => `${key}: ${String(value).trim()}`)
     .join('\n');
@@ -139,7 +213,11 @@ const DocumentUpload = () => {
         }
       });
 
-      await worker.setParameters({ tessedit_pageseg_mode: '6' });
+      await worker.setParameters({
+        tessedit_pageseg_mode: '4',
+        preserve_interword_spaces: '1',
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/:-,. ',
+      });
       const result = await worker.recognize(processedBlob);
       await worker.terminate();
 
@@ -155,8 +233,9 @@ const DocumentUpload = () => {
             raw_text: text,
             doc_type: selectedDoc?.type_name || ''
           });
-          if (res.data?.fields && Object.keys(res.data.fields).length > 0) {
-            setOcrFields(res.data.fields);
+          const aiFields = canonicalizeOcrFields(res.data?.fields);
+          if (Object.keys(aiFields).length > 0) {
+            setOcrFields(aiFields);
           } else {
             setOcrFields(parseOcrFields(text));
           }
@@ -210,10 +289,14 @@ const DocumentUpload = () => {
     setUploading(true);
     setMessage({ text: '', type: '' });
     try {
-      await api.post('/documents/upload', formData, {
+      const res = await api.post('/documents/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setMessage({ text: '✅ Document uploaded successfully!', type: 'success' });
+      const autofilledFields = res.data?.autofilled_fields || [];
+      const autofillMessage = autofilledFields.length > 0
+        ? ` Auto-filled profile fields: ${autofilledFields.join(', ')}.`
+        : '';
+      setMessage({ text: `Document uploaded successfully!${autofillMessage}`, type: 'success' });
       setFile(null);
       setPreview(null);
       setOcrText('');

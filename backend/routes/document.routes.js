@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../config/db');
 const auth = require('../middleware/auth');
+const { encrypt } = require('../utils/encrypt');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, path.join(__dirname, '../uploads/')),
@@ -28,17 +29,153 @@ async function ensureSignatureTable() {
   `);
 }
 
+function parseFormattedOcrText(text) {
+  const fields = {};
+
+  String(text || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const separatorIndex = line.indexOf(':');
+      if (separatorIndex === -1) return;
+
+      const key = normalizeFieldName(line.slice(0, separatorIndex));
+      const value = line.slice(separatorIndex + 1).trim();
+      if (key && value) fields[key] = value;
+    });
+
+  return fields;
+}
+
+function normalizeFieldName(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function getOcrValue(fields, names) {
+  const normalizedNames = names.map(normalizeFieldName);
+  const key = Object.keys(fields).find((fieldName) => {
+    const normalizedFieldName = normalizeFieldName(fieldName);
+    return normalizedNames.some(name => normalizedFieldName === name || normalizedFieldName.includes(name));
+  });
+  return key ? fields[key] : null;
+}
+
+function normalizeDateForDb(value) {
+  if (!value) return null;
+
+  const raw = String(value).trim();
+  const indianMatch = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (indianMatch) {
+    const [, day, month, yearValue] = indianMatch;
+    const year = yearValue.length === 2 ? `20${yearValue}` : yearValue;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  return null;
+}
+
+async function updateProfileFromOcr(userId, extractedText) {
+  const fields = parseFormattedOcrText(extractedText);
+  const name = getOcrValue(fields, ['Full Name', 'Name', 'Candidate Name', 'Applicant Name']);
+  const dob = normalizeDateForDb(getOcrValue(fields, ['Date of Birth', 'DOB', 'D.O.B']));
+  const rawGender = getOcrValue(fields, ['Gender', 'Sex']);
+  const gender = rawGender ? rawGender.toUpperCase().match(/\b(MALE|FEMALE|OTHER)\b/)?.[1] || rawGender : null;
+  const address = getOcrValue(fields, ['Address', 'Residence Address']);
+  const pan = getOcrValue(fields, ['PAN', 'PAN Number', 'Permanent Account Number']);
+
+  if (!name && !dob && !gender && !address && !pan) {
+    return [];
+  }
+
+  const autofilled = [];
+
+  if (name) {
+    const updateUser = await db.query(
+      `UPDATE users
+       SET name = $1, updated_at = NOW()
+       WHERE id = $2 AND profile_complete = false`,
+      [name, userId]
+    );
+    if (updateUser.rowCount > 0) autofilled.push('name');
+  }
+
+  const { rows } = await db.query(
+    'SELECT dob, gender, address, pan, emergency_contact, bank_account, education_json FROM employee_profiles WHERE user_id = $1',
+    [userId]
+  );
+  const existing = rows[0];
+  const encryptedPan = pan ? encrypt(pan) : null;
+
+  if (existing) {
+    await db.query(
+      `UPDATE employee_profiles
+       SET dob = COALESCE(dob, $1),
+           gender = COALESCE(NULLIF(gender, ''), $2),
+           address = COALESCE(NULLIF(address, ''), $3),
+           pan = COALESCE(NULLIF(pan, ''), $4),
+           updated_at = NOW()
+       WHERE user_id = $5`,
+      [dob, gender, address, encryptedPan, userId]
+    );
+
+    if (!existing.dob && dob) autofilled.push('dob');
+    if (!existing.gender && gender) autofilled.push('gender');
+    if (!existing.address && address) autofilled.push('address');
+    if (!existing.pan && pan) autofilled.push('pan');
+  } else {
+    await db.query(
+      `INSERT INTO employee_profiles (user_id, dob, gender, address, pan)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, dob, gender, address, encryptedPan]
+    );
+
+    if (dob) autofilled.push('dob');
+    if (gender) autofilled.push('gender');
+    if (address) autofilled.push('address');
+    if (pan) autofilled.push('pan');
+  }
+
+  await refreshProfileComplete(userId);
+
+  return autofilled;
+}
+
+async function refreshProfileComplete(userId) {
+  const { rows } = await db.query(
+    `SELECT u.name, p.dob, p.gender, p.address, p.emergency_contact, p.bank_account, p.pan, p.education_json
+     FROM users u
+     LEFT JOIN employee_profiles p ON u.id = p.user_id
+     WHERE u.id = $1`,
+    [userId]
+  );
+
+  const profile = rows[0];
+  const educationComplete = profile?.education_json?.degree && profile.education_json?.college && profile.education_json?.year;
+  const profileComplete = Boolean(
+    profile?.name &&
+    profile?.dob &&
+    profile?.gender &&
+    profile?.address &&
+    profile?.emergency_contact &&
+    profile?.bank_account &&
+    profile?.pan &&
+    educationComplete
+  );
+
+  await db.query('UPDATE users SET profile_complete = $1 WHERE id = $2', [profileComplete, userId]);
+}
+
 // ── Upload Document ─────────────────────────────────────────────────────────
 router.post('/upload', auth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
-
-    // Must complete profile first
-    const userQ = await db.query('SELECT profile_complete FROM users WHERE id = $1', [req.user.id]);
-    if (!userQ.rows[0].profile_complete) {
-      fs.unlinkSync(req.file.path);
-      return res.status(403).json({ message: 'Complete profile before uploading documents' });
-    }
 
     // Validate actual MIME type via magic bytes (not just extension)
     const buffer = fs.readFileSync(req.file.path);
@@ -71,6 +208,7 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
 
     // OCR text sent from browser-side Tesseract scan (more reliable than server-side)
     const extractedText = (ocr_text && ocr_text.trim()) ? ocr_text.trim() : null;
+    const autofilledFields = extractedText ? await updateProfileFromOcr(req.user.id, extractedText) : [];
 
     // Upsert: update if exists, insert if new
     if (existing.rows.length > 0) {
@@ -102,7 +240,11 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
       );
     }
 
-    res.status(201).json({ message: 'Uploaded successfully', ocr_text: extractedText });
+    res.status(201).json({
+      message: 'Uploaded successfully',
+      ocr_text: extractedText,
+      autofilled_fields: autofilledFields,
+    });
   } catch (error) {
     console.error('Upload error:', error);
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);

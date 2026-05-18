@@ -3,9 +3,8 @@ const router = express.Router();
 const auth = require('../middleware/auth');
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama-3.3-70b-versatile'; // 70B — much better at noisy text extraction, still free on Groq
+const MODEL = 'llama-3.3-70b-versatile';
 
-// ── Parse raw OCR text using Groq LLM ────────────────────────────────────────
 router.post('/parse-ocr', auth, async (req, res) => {
   const { raw_text, doc_type } = req.body;
 
@@ -14,38 +13,37 @@ router.post('/parse-ocr', auth, async (req, res) => {
   }
 
   if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'your_groq_api_key_here') {
-    // Fallback: return empty so frontend uses regex parser
     return res.status(503).json({ message: 'Groq API key not configured' });
   }
 
   const prompt = `You are an expert OCR post-processor for Indian government identity documents (Aadhaar, PAN Card, Passport, Driving Licence) and HR documents.
 
-The input is RAW, NOISY OCR text — characters may be garbled, words split, or partially misread. Use your knowledge of Indian document formats to intelligently extract fields despite the noise.
+The input is RAW, NOISY OCR text. Characters may be garbled, words split, or partially misread. Use Indian document layout knowledge to extract only values that are strongly supported by the text.
 
 Document type hint: "${doc_type || 'Unknown'}"
 
 EXTRACTION RULES:
-1. PAN Number: Always 10 chars — 5 uppercase letters + 4 digits + 1 uppercase letter (e.g. ABCDE1234F). Look for this pattern even if surrounded by noise.
-2. Aadhaar Number: 12 digits, often in groups of 4 (e.g. 1234 5678 9012). Last 4 digits may be visible even if others are masked.
-3. Full Name: On PAN cards, the name appears AFTER "Permanent Account Number" line. On Aadhaar, after the Govt of India header. It's usually in ALL CAPS or Title Case.
-4. Father's Name: On PAN cards, labeled "Father's Name" — appears just below the name. May be garbled but look for it.
-5. Date of Birth: Format DD/MM/YYYY. On PAN labeled "Date of Birth", on Aadhaar labeled "DOB".
-6. Gender: MALE or FEMALE on Aadhaar cards.
-7. Address: Multi-line on Aadhaar, includes pin code (6 digits).
+1. Return these exact JSON keys when available: "Full Name", "PAN", "Aadhaar Number", "Father's Name", "Date of Birth", "Gender", "Address".
+2. PAN Number: Always 10 chars: 5 uppercase letters + 4 digits + 1 uppercase letter (e.g. ABCDE1234F). Fix common OCR confusion only inside the PAN number.
+3. Aadhaar Number: 12 digits, often in groups of 4 (e.g. 1234 5678 9012). Do not invent missing digits.
+4. Full Name: On PAN cards, the name appears near/after "Permanent Account Number". On Aadhaar, it is usually above DOB/YOB and below the government header.
+5. Father's Name: On PAN cards, appears below the name. Do not confuse it with the employee full name.
+6. Date of Birth: Prefer DD/MM/YYYY. Accept DOB/YOB only when visible.
+7. Gender: MALE, FEMALE, or OTHER.
+8. Address: Multi-line on Aadhaar, includes C/O/S/O/D/O/W/O and often a 6-digit PIN code. Join address lines with comma + space.
 
-IMPORTANT: The OCR text is noisy. Common errors:
-- 'O' confused with '0', 'I' with '1', 'S' with '5'
-- Extra spaces or missing spaces in the middle of words
-- Words like "faar" likely means "Father", "Anes" likely means "Name"
-- Reconstruct the most likely value using context
+IMPORTANT:
+- Ignore headers like Government of India, Unique Identification Authority of India, Income Tax Department, and slogans.
+- Do not output noisy raw lines as values.
+- If a field is uncertain, omit it instead of guessing.
+- Return only a flat JSON object. No markdown, no explanation.
 
 Raw OCR text:
 """
-${raw_text.substring(0, 2000)}
+${raw_text.substring(0, 2500)}
 """
 
-Return ONLY a JSON object with clean, corrected field values. No explanation, no markdown, no code blocks.
-Example format: {"Full Name": "AVINASH SHARMA", "PAN": "ABCDE1234F", "Father's Name": "RAMESH SHARMA", "Date of Birth": "15/08/1990"}`;
+Example format: {"Full Name": "AVINASH SHARMA", "PAN": "ABCDE1234F", "Father's Name": "RAMESH SHARMA", "Date of Birth": "15/08/1990", "Gender": "MALE", "Address": "C/O RAMESH SHARMA, HISAR, HARYANA - 125001"}`;
 
   try {
     const response = await fetch(GROQ_API_URL, {
@@ -73,10 +71,8 @@ Example format: {"Full Name": "AVINASH SHARMA", "PAN": "ABCDE1234F", "Father's N
 
     if (!content) return res.status(502).json({ message: 'Empty response from Groq' });
 
-    // Parse JSON from LLM response
     let parsed;
     try {
-      // Strip markdown code blocks if model added them anyway
       const clean = content.replace(/^```json?\n?/, '').replace(/\n?```$/, '').trim();
       parsed = JSON.parse(clean);
     } catch {
