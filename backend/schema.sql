@@ -54,6 +54,7 @@ CREATE TABLE documents (
     mime_type VARCHAR(100),
     status doc_status DEFAULT 'Pending',
     remark TEXT,
+    extracted_text TEXT,
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     verified_at TIMESTAMP,
     verified_by INT,
